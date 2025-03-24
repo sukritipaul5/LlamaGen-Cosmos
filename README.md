@@ -1,6 +1,6 @@
 # LlamaGen Training with Cosmos Tokenizer
 <p align="center">
-<img src="assets/covere.png" width=95%>
+<img src="assets/cover.png" width=95%>
 <p>
 
 
