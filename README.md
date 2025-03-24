@@ -49,40 +49,25 @@ Model Configuration:
 * Model Type: C2I (class-conditional)
 * Token Format: COSMOS ImageNet tokens (h5 format)
 
-Training Hyperparameters:
-* Batch Size: 28
-* Epochs: 300
-* Learning Rate: 1e-4
-* Weight Decay: 5e-2
-* Dropout Probability: 0.1
-* Mixed Precision: BF16
 
-### Main Training Components
+## 🚀 Training Launch & Main Training Components
 * Training script: `/autoregressive/train/train_c2i.py`
 * Launch script: `/scripts/autoregressive/train_c2i_launch.sh`
-
 The launch script provides SLURM configuration for distributed training across multiple nodes.
 
+The main training can be launched using:
+```bash
+sbatch scripts/autoregressive/train_c2i_launch.sh
+```
 ### Key Features
 * Multi-node distributed training using SLURM
 * Cached latents for efficient training
 * Class-conditional image generation
 * Built on LlamaGen's autoregressive architecture
 
-## 🚀 Training Launch
-
-The main training can be launched using:
-```bash
-sbatch scripts/autoregressive/train_c2i_launch.sh
-```
-
-Key configurations in the launch script:
-* Multi-node setup with SLURM
-* GPU allocation and memory settings
-* Distributed training parameters
-* Dataset and checkpoint paths
 
 ## 📝 References
+This work was implemented as part of [Prof. Tom Goldstein's Lab](https://www.cs.umd.edu/~tomg/) at the University of Maryland.
 
 This work builds upon:
 > [**Autoregressive Model Beats Diffusion: Llama for Scalable Image Generation**](https://arxiv.org/abs/2406.06525)<br>
@@ -94,7 +79,7 @@ For the original implementation, visit [LlamaGen GitHub Repository](https://gith
 This implementation uses [NVIDIA Cosmos Tokenizer](https://github.com/NVIDIA/Cosmos-Tokenizer) for image tokenization:
 > **NVIDIA Cosmos Tokenizer**: A suite of image and video neural tokenizers that advances the state-of-the-art in visual tokenization. We specifically use their DI8-8 tokenizer for efficient image encoding.
 
-This work was implemented as part of [Prof. Tom Goldstein's Lab](https://www.cs.umd.edu/~tomg/) at the University of Maryland.
+
 
 ## License
 This project follows the same MIT License as the original LlamaGen repository.
