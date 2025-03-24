@@ -25,6 +25,8 @@ from dataset.augmentation import random_crop_arr
 from dataset.build import build_dataset
 from tokenizer.tokenizer_image.vq_model import VQ_models
 from tokenizer.tokenizer_image.vq_loss import VQLoss
+import h5py
+from glob import glob
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -111,13 +113,16 @@ def main(args):
     optimizer_disc = torch.optim.Adam(vq_loss.discriminator.parameters(), lr=args.lr, betas=(args.beta1, args.beta2))
 
     # Setup data:
-    transform = transforms.Compose([
-        transforms.Lambda(lambda pil_image: random_crop_arr(pil_image, args.image_size)),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
-    ])
-    dataset = build_dataset(args, transform=transform)
+    # transform = transforms.Compose([
+    #     transforms.Lambda(lambda pil_image: random_crop_arr(pil_image, args.image_size)),
+    #     transforms.RandomHorizontalFlip(),
+    #     transforms.ToTensor(),
+    #     transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
+    # ])
+    # dataset = build_dataset(args, transform=transform)
+    h5_files = glob('/fs/cml-projects/yet-another-diffusion/cosmos-imagenet-shards/*/*.h5') 
+    dataset = CosmosTokenDataset(h5_files)
+
     sampler = DistributedSampler(
         dataset,
         num_replicas=dist.get_world_size(),

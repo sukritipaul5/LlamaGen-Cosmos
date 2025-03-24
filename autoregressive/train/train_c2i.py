@@ -14,6 +14,8 @@ import os
 import time
 import inspect
 import argparse
+import wandb
+from datetime import datetime
 
 from utils.logger import create_logger
 from utils.distributed import init_distributed_mode
@@ -77,12 +79,30 @@ def main(args):
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
 
-        time_record = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
-        cloud_results_dir = f"{args.cloud_save_path}/{time_record}"
-        cloud_checkpoint_dir = f"{cloud_results_dir}/{experiment_index:03d}-{model_string_name}/checkpoints"
-        os.makedirs(cloud_checkpoint_dir, exist_ok=True)
-        logger.info(f"Experiment directory created in cloud at {cloud_checkpoint_dir}")
-    
+        try:
+            wandb.init(
+                project=args.wandb_project,
+                entity=args.wandb_entity,
+                config=vars(args),
+                resume=True if args.gpt_ckpt else False,
+                name=args.wandb_name,
+                id=args.wandb_id
+            )
+        except Exception as e:
+            logger.error(f"Wandb initialization failed with error: {str(e)}")
+            logger.error(f"Wandb package info: {wandb.__file__}")
+            raise
+        
+        if args.gpt_ckpt is None:
+            time_record = time.strftime("%Y-%m-%d-%H-%M-%S", time.localtime())
+            cloud_results_dir = f"{args.cloud_save_path}/{time_record}"
+            cloud_checkpoint_dir = f"{cloud_results_dir}/{experiment_index:03d}-{model_string_name}/checkpoints"
+            os.makedirs(cloud_checkpoint_dir, exist_ok=True)
+            logger.info(f"Experiment directory created in cloud at {cloud_checkpoint_dir}")
+        else:
+            # Extract cloud checkpoint directory from the checkpoint path
+            cloud_checkpoint_dir = os.path.dirname(args.gpt_ckpt)
+            logger.info(f"Using cloud checkpoint directory from loaded checkpoint: {cloud_checkpoint_dir}")
     else:
         logger = create_logger(None)
 
@@ -101,7 +121,7 @@ def main(args):
     latent_size = args.image_size // args.downsample_size
     model = GPT_models[args.gpt_model](
         vocab_size=args.vocab_size,
-        block_size=latent_size ** 2,
+        block_size=1024, #latent_size ** 2,
         num_classes=args.num_classes,
         cls_token_num=args.cls_token_num,
         model_type=args.gpt_type,
@@ -146,7 +166,16 @@ def main(args):
 
     # Prepare models for training:
     if args.gpt_ckpt:
-        checkpoint = torch.load(args.gpt_ckpt, map_location="cpu")
+        """
+           gpt_ckpt is folder with checkpoints. 
+           Select the latest checkpoint in the folder.
+        """
+        checkpoint_files = glob(f"{args.gpt_ckpt}/*.pt")
+        checkpoint_files.sort(key=lambda x: int(x.split('/')[-1].split('.')[0]))
+        ckpt_file = checkpoint_files[-1]
+        print(f"Loading latest checkpoint from {ckpt_file}")
+
+        checkpoint = torch.load(ckpt_file, map_location="cpu")
         model.load_state_dict(checkpoint["model"])
         if args.ema:
             ema.load_state_dict(checkpoint["ema"] if "ema" in checkpoint else checkpoint["model"])
@@ -155,7 +184,7 @@ def main(args):
         start_epoch = int(train_steps / int(len(dataset) / args.global_batch_size))
         train_steps = int(start_epoch * int(len(dataset) / args.global_batch_size))
         del checkpoint
-        logger.info(f"Resume training from checkpoint: {args.gpt_ckpt}")
+        logger.info(f"Resume training from checkpoint: {ckpt_file}")
         logger.info(f"Initial state: steps={train_steps}, epochs={start_epoch}")
     else:
         train_steps = 0
@@ -167,6 +196,9 @@ def main(args):
         logger.info("compiling the model... (may take several minutes)")
         model = torch.compile(model) # requires PyTorch 2.0        
     
+
+    #print num parameters
+    logger.info(f"Number of parameters: {sum(p.numel() for p in model.parameters()):,}")
     model = DDP(model.to(device), device_ids=[args.gpu])
     model.train()  # important! This enables embedding dropout for classifier-free guidance
     if args.ema:
@@ -214,11 +246,28 @@ def main(args):
                 torch.cuda.synchronize()
                 end_time = time.time()
                 steps_per_sec = log_steps / (end_time - start_time)
+                samples_per_sec = steps_per_sec * args.global_batch_size  # Global throughput across all nodes
+                
                 # Reduce loss history over all processes:
                 avg_loss = torch.tensor(running_loss / log_steps, device=device)
                 dist.all_reduce(avg_loss, op=dist.ReduceOp.SUM)
                 avg_loss = avg_loss.item() / dist.get_world_size()
-                logger.info(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, Train Steps/Sec: {steps_per_sec:.2f}")
+                
+                logger.info(f"(step={train_steps:07d}) Train Loss: {avg_loss:.4f}, "
+                          f"Train Steps/Sec: {steps_per_sec:.2f}, "
+                          f"Samples/Sec: {samples_per_sec:.2f}")
+                
+                if rank == 0:
+                    # Log to wandb
+                    wandb.log({
+                        "train/loss": avg_loss,
+                        "train/steps_per_sec": steps_per_sec,
+                        "train/samples_per_sec": samples_per_sec,
+                        "train/learning_rate": optimizer.param_groups[0]["lr"],
+                        "train/epoch": epoch,
+                        "train/step": train_steps,
+                    }, step=train_steps)
+                
                 # Reset monitoring variables:
                 running_loss = 0
                 log_steps = 0
@@ -255,17 +304,20 @@ def main(args):
     logger.info("Done!")
     dist.destroy_process_group()
 
+    if rank == 0:
+        wandb.finish()
+
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--code-path", type=str, required=True)
+    parser.add_argument("--code-path", type=str, default=None)
     parser.add_argument("--cloud-save-path", type=str, required=True, help='please specify a cloud disk path, if not, local path')
     parser.add_argument("--no-local-save", action='store_true', help='no save checkpoints to local path for limited disk volume')
     parser.add_argument("--gpt-model", type=str, choices=list(GPT_models.keys()), default="GPT-B")
     parser.add_argument("--gpt-ckpt", type=str, default=None, help="ckpt path for resume training")
     parser.add_argument("--gpt-type", type=str, choices=['c2i', 't2i'], default="c2i", help="class-conditional or text-conditional")
-    parser.add_argument("--vocab-size", type=int, default=16384, help="vocabulary size of visual tokenizer")
+    parser.add_argument("--vocab-size", type=int, default=64000, help="vocabulary size of visual tokenizer")
     parser.add_argument("--ema", action='store_true', help="whether using ema training")
     parser.add_argument("--cls-token-num", type=int, default=1, help="max token number of condition input")
     parser.add_argument("--dropout-p", type=float, default=0.1, help="dropout_p of resid_dropout_p and ffn_dropout_p")
@@ -275,7 +327,7 @@ if __name__ == "__main__":
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--dataset", type=str, default='imagenet_code')
     parser.add_argument("--image-size", type=int, choices=[256, 384, 448, 512], default=256)
-    parser.add_argument("--downsample-size", type=int, choices=[8, 16], default=16)
+    parser.add_argument("--downsample-size", type=int, choices=[8, 16, 32], default=32)
     parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -290,5 +342,10 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt-every", type=int, default=5000)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
     parser.add_argument("--mixed-precision", type=str, default='bf16', choices=["none", "fp16", "bf16"]) 
+    parser.add_argument("--cosmos_path", type=str, default=None, help="Path to COSMOS token h5 files")
+    parser.add_argument("--wandb-project", type=str, default="llamagen-training")
+    parser.add_argument("--wandb-entity", type=str, default="sukriti5")
+    parser.add_argument("--wandb-name", type=str, default=None, help="name of the wandb run")
+    parser.add_argument("--wandb-id", type=str, default=None, help="wandb run id to resume")
     args = parser.parse_args()
     main(args)

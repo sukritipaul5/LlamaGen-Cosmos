@@ -87,14 +87,11 @@ def main(args):
         torch_dtype=precision,
         model_max_length=args.t5_feature_max_len,
     )
-    # first 5
     prompts = [
-        "Perched on a windowsill, a black cat gazes out into the garden.",
-        "Over a calm river in autumn, a wooden bridge stretches peacefully.",
-        "Steam rises from a cup of coffee sitting beside an open book on the table.",
-        "At a lively carnival, a cheerful clown holds a cluster of balloons.",
-        "Driving through green fields, a farmer navigates their sturdy tractor.",
-        "In a sleek modern kitchen, a robot gracefully serves tea.",
+        "A portrait photo of a kangaroo wearing an orange hoodie and blue sunglasses standing on the grassin front of the Sydney Opera House holding a sign on the chest that says Welcome Friends!",
+        "A blue Porsche 356 parked in front of a yellow brick wall.",
+        "A photo of an astronaut riding a horse in the forest. There is a river in front of them with water lilies.",
+        "A map of the United States made out of sushi. It is on a table next to a glass of red wine."
     ]
 
     caption_embs, emb_masks = t5_model.get_text_embeddings(prompts)

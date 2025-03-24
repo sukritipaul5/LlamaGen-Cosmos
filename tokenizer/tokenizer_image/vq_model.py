@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 @dataclass
 class ModelArgs:
-    codebook_size: int = 16384
+    codebook_size: int = 64000 #16384
     codebook_embed_dim: int = 8
     codebook_l2_norm: bool = True
     codebook_show_usage: bool = True
