@@ -13,9 +13,7 @@
 #SBATCH --output=logs/llamagencosmos-%j.out
 #SBATCH --wait-all-nodes=1
 #SBATCH --exclusive
-#SBATCH --exclude=gammagpu11,gammagpu12,gammagpu15,gammagpu16,gammagpu17,gammagpu18,gammagpu10
 
-#gammagpu13,gammagpu14
 
 
 NODES_ARRAY=($(scontrol show hostnames $SLURM_JOB_NODELIST))
